@@ -23,7 +23,7 @@ pkgs.mkShell {
     # Android tools
     android-tools apktool
     # Decompilation
-    jdk radare2
+    jadx jdk radare2
     # Text processing
     ripgrep jq xmlstarlet
     # Rust toolchain
