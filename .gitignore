@@ -1,0 +1,11 @@
+*.apk
+*.xapk
+extracted/
+decompiled/
+decompiled_csharp/
+analysis/
+reports/
+secrets/
+*.har
+*.pcap
+result
