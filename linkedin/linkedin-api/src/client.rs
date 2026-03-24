@@ -332,6 +332,24 @@ impl LinkedInClient {
         check_response(resp).await
     }
 
+    /// Fetch the user's feed (`/voyager/api/feed/updates?q=findFeed`).
+    ///
+    /// Uses the `q=findFeed` finder with standard pagination parameters.
+    /// Returns the raw JSON response which should contain `elements` (array of
+    /// `UpdateV2` items) and `paging` (with `start`, `count`, `total`).
+    ///
+    /// # Parameters
+    ///
+    /// - `start`: 0-based offset for pagination.
+    /// - `count`: Number of feed items to request per page.
+    ///
+    /// See `re/api_endpoint_catalog.md` section 4 and `re/pegasus_models.md`
+    /// for the `UpdateV2` model definition.
+    pub async fn get_feed(&self, start: u32, count: u32) -> Result<Value, Error> {
+        let path = format!("feed/updates?q=findFeed&start={}&count={}", start, count);
+        self.get(&path).await
+    }
+
     /// Fetch the authenticated user's own profile (`/voyager/api/me`).
     ///
     /// This is the simplest authenticated endpoint and serves as a session

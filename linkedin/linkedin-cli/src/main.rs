@@ -4,6 +4,7 @@ use std::process;
 use clap::{Parser, Subcommand};
 use linkedin_api::auth::Session;
 use linkedin_api::client::LinkedInClient;
+use linkedin_api::models::FeedResponse;
 
 #[derive(Parser)]
 #[command(name = "linkedin-cli")]
@@ -28,7 +29,10 @@ enum Commands {
     /// Messaging operations
     Messages,
     /// Feed and posts
-    Feed,
+    Feed {
+        #[command(subcommand)]
+        action: FeedAction,
+    },
     /// Connection management
     Connections,
 }
@@ -50,6 +54,24 @@ enum AuthAction {
     },
     /// Log out and clear stored session
     Logout,
+}
+
+#[derive(Subcommand)]
+enum FeedAction {
+    /// List feed updates
+    List {
+        /// Number of feed items to fetch (default: 10)
+        #[arg(long, default_value = "10")]
+        count: u32,
+
+        /// Pagination offset (default: 0)
+        #[arg(long, default_value = "0")]
+        start: u32,
+
+        /// Output raw JSON instead of human-readable format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -106,9 +128,14 @@ async fn main() {
         Commands::Messages => {
             println!("Messages: not yet implemented");
         }
-        Commands::Feed => {
-            println!("Feed: not yet implemented");
-        }
+        Commands::Feed { action } => match action {
+            FeedAction::List { count, start, json } => {
+                if let Err(e) = cmd_feed_list(start, count, json).await {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+            }
+        },
         Commands::Connections => {
             println!("Connections: not yet implemented");
         }
@@ -312,4 +339,128 @@ fn print_me_summary(me: &serde_json::Value) {
             println!("Response keys: {}", keys.join(", "));
         }
     }
+}
+
+/// Handle `feed list [--count N] [--start N] [--json]`.
+///
+/// Loads the session, calls GET /voyager/api/feed/updates?q=findFeed with
+/// pagination params, and prints the results.
+async fn cmd_feed_list(start: u32, count: u32, raw_json: bool) -> Result<(), String> {
+    let path = Session::default_path().map_err(|e| format!("{e}"))?;
+
+    if !path.exists() {
+        return Err(format!(
+            "no session found at {} -- run `auth login` first",
+            path.display()
+        ));
+    }
+
+    let session = Session::load(&path).map_err(|e| format!("{e}"))?;
+
+    if !session.is_valid() {
+        return Err("session is invalid (empty li_at cookie)".to_string());
+    }
+
+    let client =
+        LinkedInClient::with_session(&session).map_err(|e| format!("client error: {e}"))?;
+
+    let value = client
+        .get_feed(start, count)
+        .await
+        .map_err(|e| format!("API call failed: {e}"))?;
+
+    if raw_json {
+        let pretty =
+            serde_json::to_string_pretty(&value).map_err(|e| format!("JSON format error: {e}"))?;
+        println!("{}", pretty);
+        return Ok(());
+    }
+
+    // Try to parse into our typed FeedResponse for structured output.
+    let feed: FeedResponse = serde_json::from_value(value.clone())
+        .map_err(|e| format!("failed to parse feed response: {e}"))?;
+
+    // Print paging info.
+    if let Some(ref paging) = feed.paging {
+        let total_str = paging
+            .total
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        println!(
+            "Feed updates (offset {}, showing {}, total {})",
+            paging.start, paging.count, total_str
+        );
+    }
+    println!("---");
+
+    if feed.elements.is_empty() {
+        println!("(no feed items)");
+        return Ok(());
+    }
+
+    for (i, element) in feed.elements.iter().enumerate() {
+        let idx = start as usize + i + 1;
+        print_feed_item(idx, element);
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Print a brief human-readable summary of a single feed item.
+///
+/// Feed items are `UpdateV2` records. We extract what we can and skip
+/// unknown fields gracefully. The real structure is deeply nested, so
+/// this is best-effort until we've validated against live data.
+fn print_feed_item(index: usize, item: &serde_json::Value) {
+    // Try to extract actor name.
+    let actor_name = item
+        .get("actor")
+        .and_then(|a| a.get("name"))
+        .and_then(|n| n.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("(unknown author)");
+
+    // Try to extract commentary text.
+    let commentary = item
+        .get("commentary")
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("");
+
+    // Truncate long commentary for the summary view.
+    let commentary_display = if commentary.len() > 120 {
+        format!("{}...", &commentary[..120])
+    } else {
+        commentary.to_string()
+    };
+
+    // Entity URN for reference.
+    let urn = item.get("entityUrn").and_then(|u| u.as_str()).unwrap_or("");
+
+    // Social counts if available.
+    let likes = item
+        .get("socialDetail")
+        .and_then(|s| s.get("totalSocialActivityCounts"))
+        .and_then(|c| c.get("numLikes"))
+        .and_then(|n| n.as_u64())
+        .unwrap_or(0);
+    let comments = item
+        .get("socialDetail")
+        .and_then(|s| s.get("totalSocialActivityCounts"))
+        .and_then(|c| c.get("numComments"))
+        .and_then(|n| n.as_u64())
+        .unwrap_or(0);
+
+    println!(
+        "[{}] {} {}",
+        index,
+        actor_name,
+        if !urn.is_empty() { urn } else { "" }
+    );
+    if !commentary_display.is_empty() {
+        println!("    {}", commentary_display);
+    }
+    println!("    likes: {}  comments: {}", likes, comments);
 }
