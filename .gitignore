@@ -9,3 +9,5 @@ secrets/
 *.har
 *.pcap
 result
+target/
+linkedin/target/
