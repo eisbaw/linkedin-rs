@@ -350,6 +350,28 @@ impl LinkedInClient {
         self.get(&path).await
     }
 
+    /// Fetch a user's full profile by public identifier (vanity URL slug).
+    ///
+    /// Calls `GET /voyager/api/identity/profiles/{public_id}` with the
+    /// `decorationId` query parameter set to
+    /// `com.linkedin.voyager.deco.identity.FullProfile` for full field
+    /// projection (positions, educations, summary, etc.).
+    ///
+    /// The `public_id` is the URL slug portion of a LinkedIn profile URL,
+    /// e.g. `john-doe-123` from `https://www.linkedin.com/in/john-doe-123`.
+    ///
+    /// Returns the raw JSON response. Use models in [`crate::models`] for
+    /// typed access to `MiniProfile`, `Profile`, `Position`, `Education`.
+    ///
+    /// See `re/api_endpoint_catalog.md` section 3 and
+    /// `re/architecture_overview.md` section 3.6 (Decoration).
+    pub async fn get_profile(&self, public_id: &str) -> Result<Value, Error> {
+        let path = format!(
+            "identity/profiles/{public_id}?decorationId=com.linkedin.voyager.deco.identity.FullProfile"
+        );
+        self.get(&path).await
+    }
+
     /// Fetch the authenticated user's own profile (`/voyager/api/me`).
     ///
     /// This is the simplest authenticated endpoint and serves as a session

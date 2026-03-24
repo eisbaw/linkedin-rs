@@ -85,10 +85,14 @@ enum ProfileAction {
         #[arg(long)]
         json: bool,
     },
-    /// View a profile by URN or vanity name (not yet implemented)
+    /// View a profile by public identifier (vanity URL slug)
     View {
-        /// LinkedIn profile URN or vanity name
-        id: String,
+        /// LinkedIn public identifier (vanity URL slug, e.g. john-doe-123)
+        public_id: String,
+
+        /// Output raw JSON instead of human-readable format
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -159,8 +163,11 @@ async fn main() {
                     process::exit(1);
                 }
             }
-            ProfileAction::View { id } => {
-                println!("Profile view for '{}': not yet implemented", id);
+            ProfileAction::View { public_id, json } => {
+                if let Err(e) = cmd_profile_view(&public_id, json).await {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
             }
         },
         Commands::Messages { action } => match action {
@@ -350,6 +357,182 @@ async fn cmd_profile_me(raw_json: bool) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Handle `profile view <public_id> [--json]`.
+///
+/// Loads the session, creates a client, calls the identity/profiles endpoint
+/// with decoration for full field projection, and prints the result.
+async fn cmd_profile_view(public_id: &str, raw_json: bool) -> Result<(), String> {
+    let (session, _path) = load_session()?;
+
+    let client =
+        LinkedInClient::with_session(&session).map_err(|e| format!("client error: {e}"))?;
+
+    let profile = client
+        .get_profile(public_id)
+        .await
+        .map_err(|e| format!("API call failed: {e}"))?;
+
+    if raw_json {
+        let pretty = serde_json::to_string_pretty(&profile)
+            .map_err(|e| format!("JSON format error: {e}"))?;
+        println!("{}", pretty);
+    } else {
+        print_profile_summary(&profile);
+    }
+
+    Ok(())
+}
+
+/// Print a human-readable summary of an identity/profiles response.
+///
+/// Extracts name, headline, location, current position, and education.
+/// The response may be a full `Profile` object or may have nested
+/// structures depending on the decoration recipe. We handle both
+/// gracefully by probing known field paths.
+fn print_profile_summary(profile: &serde_json::Value) {
+    // Name.
+    let first = profile
+        .get("firstName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let last = profile
+        .get("lastName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if !first.is_empty() || !last.is_empty() {
+        println!("Name: {} {}", first, last);
+    }
+
+    // Headline.
+    if let Some(headline) = profile.get("headline").and_then(|v| v.as_str()) {
+        println!("Headline: {}", headline);
+    }
+
+    // Location.
+    if let Some(loc) = profile.get("locationName").and_then(|v| v.as_str()) {
+        println!("Location: {}", loc);
+    } else if let Some(geo) = profile.get("geoLocationName").and_then(|v| v.as_str()) {
+        println!("Location: {}", geo);
+    }
+
+    // Industry.
+    if let Some(industry) = profile.get("industryName").and_then(|v| v.as_str()) {
+        println!("Industry: {}", industry);
+    }
+
+    // Summary / About.
+    if let Some(summary) = profile.get("summary").and_then(|v| v.as_str()) {
+        let display = if summary.len() > 200 {
+            format!("{}...", &summary[..200])
+        } else {
+            summary.to_string()
+        };
+        println!("About: {}", display);
+    }
+
+    // Entity URN.
+    if let Some(urn) = profile.get("entityUrn").and_then(|v| v.as_str()) {
+        println!("URN: {}", urn);
+    }
+
+    // MiniProfile fields (if embedded).
+    if let Some(mini) = profile.get("miniProfile") {
+        if let Some(pub_id) = mini.get("publicIdentifier").and_then(|v| v.as_str()) {
+            println!("Public ID: {}", pub_id);
+        }
+    }
+
+    // Current position -- look for positions in various shapes.
+    // The response may include `positions` as an inline collection
+    // (with `elements`) or as a direct array.
+    let positions = profile.get("positions").and_then(|p| {
+        p.get("elements")
+            .and_then(|e| e.as_array())
+            .or_else(|| p.as_array())
+    });
+    if let Some(pos_list) = positions {
+        if !pos_list.is_empty() {
+            println!("\nPositions:");
+            for pos in pos_list {
+                let title = pos.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                let company = pos
+                    .get("companyName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let period = format_time_period(pos.get("timePeriod"));
+                if !title.is_empty() || !company.is_empty() {
+                    println!("  - {} at {}{}", title, company, period);
+                }
+            }
+        }
+    }
+
+    // Education.
+    let educations = profile.get("educations").and_then(|e| {
+        e.get("elements")
+            .and_then(|el| el.as_array())
+            .or_else(|| e.as_array())
+    });
+    if let Some(edu_list) = educations {
+        if !edu_list.is_empty() {
+            println!("\nEducation:");
+            for edu in edu_list {
+                let school = edu.get("schoolName").and_then(|v| v.as_str()).unwrap_or("");
+                let degree = edu.get("degreeName").and_then(|v| v.as_str()).unwrap_or("");
+                let field = edu
+                    .get("fieldOfStudy")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let period = format_time_period(edu.get("timePeriod"));
+                let degree_field = match (degree.is_empty(), field.is_empty()) {
+                    (true, true) => String::new(),
+                    (false, true) => format!(", {}", degree),
+                    (true, false) => format!(", {}", field),
+                    (false, false) => format!(", {} in {}", degree, field),
+                };
+                if !school.is_empty() {
+                    println!("  - {}{}{}", school, degree_field, period);
+                }
+            }
+        }
+    }
+
+    // Print top-level keys for discoverability.
+    if let Some(obj) = profile.as_object() {
+        let keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+        if !keys.is_empty() {
+            println!("\nResponse keys: {}", keys.join(", "));
+        }
+    }
+}
+
+/// Format a `timePeriod` object into a human-readable string like " (2020 - 2023)".
+///
+/// The `timePeriod` has shape `{ "startDate": { "year": N, "month": N }, "endDate": ... }`.
+/// Returns an empty string if the input is `None` or lacks date fields.
+fn format_time_period(time_period: Option<&serde_json::Value>) -> String {
+    let tp = match time_period {
+        Some(v) => v,
+        None => return String::new(),
+    };
+
+    let start_year = tp
+        .get("startDate")
+        .and_then(|d| d.get("year"))
+        .and_then(|y| y.as_u64());
+    let end_year = tp
+        .get("endDate")
+        .and_then(|d| d.get("year"))
+        .and_then(|y| y.as_u64());
+
+    match (start_year, end_year) {
+        (Some(s), Some(e)) => format!(" ({} - {})", s, e),
+        (Some(s), None) => format!(" ({} - present)", s),
+        (None, Some(e)) => format!(" (? - {})", e),
+        (None, None) => String::new(),
+    }
 }
 
 /// Print a human-readable summary of the /voyager/api/me response.
