@@ -517,20 +517,50 @@ impl LinkedInClient {
 
     /// Fetch the user's notification cards.
     ///
-    /// Calls `GET /voyager/api/identity/notificationCards` with pagination.
-    /// Returns the raw JSON response containing `elements` (array of
-    /// `NotificationCard` items) and `paging`.
+    /// Uses the Voyager GraphQL endpoint with the
+    /// `identityDashNotificationCardsByFilterVanityName` finder query from
+    /// `NotificationsGraphQLClient.java` in the decompiled international APK.
+    ///
+    /// The legacy REST endpoint `identity/notificationCards` returns HTTP 404
+    /// on the international build -- notifications have migrated to the
+    /// Dash/GraphQL surface.
     ///
     /// # Parameters
     ///
     /// - `start`: 0-based offset for pagination.
     /// - `count`: Number of notification cards to request per page.
     ///
+    /// Returns the collection object (with `elements`, `paging`, `metadata`)
+    /// unwrapped from the GraphQL envelope.
+    ///
     /// See `re/api_endpoint_catalog.md` section 11 and `re/pegasus_models.md`
     /// section 3.8 for the `Card` (NotificationCard) model definition.
     pub async fn get_notifications(&self, start: u32, count: u32) -> Result<Value, Error> {
-        let path = format!("identity/notificationCards?start={}&count={}", start, count);
-        self.get(&path).await
+        // queryId from NotificationsGraphQLClient.java static initializer:
+        //   voyagerIdentityDashNotificationCards.1a1ca07d1f7a6e1033fd88d5fd2da611
+        //
+        // Variables: start (Integer), count (Integer), filterVanityName (optional String).
+        // We omit filterVanityName to get the default "all notifications" view.
+        let variables = format!("(start:{},count:{})", start, count);
+        let params = format!(
+            "variables={}&queryId=voyagerIdentityDashNotificationCards.1a1ca07d1f7a6e1033fd88d5fd2da611&queryName=NotificationsCardsByFilterVanityName",
+            variables
+        );
+        let raw = self.graphql_get(&params).await?;
+
+        // Unwrap the GraphQL envelope:
+        //   data.identityDashNotificationCardsByFilterVanityName
+        // which contains { elements, paging, metadata }.
+        raw.get("data")
+            .and_then(|d| d.get("identityDashNotificationCardsByFilterVanityName"))
+            .cloned()
+            .ok_or_else(|| Error::Api {
+                status: 0,
+                body: format!(
+                    "unexpected GraphQL response shape (missing data.identityDashNotificationCardsByFilterVanityName): {}",
+                    serde_json::to_string(&raw).unwrap_or_default()
+                ),
+            })
     }
 
     /// Fetch events (messages) within a specific conversation.

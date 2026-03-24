@@ -1105,8 +1105,9 @@ fn print_search_entity(index: usize, entity: &serde_json::Value) {
 
 /// Handle `notifications list [--count N] [--start N] [--json]`.
 ///
-/// Loads the session, calls GET /voyager/api/identity/notificationCards with
-/// pagination params, and prints the results.
+/// Loads the session, calls the Voyager GraphQL notifications endpoint
+/// (`identityDashNotificationCardsByFilterVanityName`) with pagination
+/// params, and prints the results.
 async fn cmd_notifications_list(start: u32, count: u32, raw_json: bool) -> Result<(), String> {
     let (client, _path) = load_session_client()?;
 
