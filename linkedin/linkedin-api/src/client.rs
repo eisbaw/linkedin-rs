@@ -1056,6 +1056,72 @@ impl LinkedInClient {
         self.get("identity/wvmpCards").await
     }
 
+    /// Create a new text-only post (share) on the authenticated user's feed.
+    ///
+    /// Uses the Dash GraphQL CREATE mutation `createContentcreationDashShares`
+    /// discovered in `SharingGraphQLClient.java` in the decompiled international
+    /// APK (queryId: `voyagerContentcreationDashShares.f8a4f57de961be2d370fbcc862e867cf`).
+    ///
+    /// The mutation variables mirror the `ShareData` model fields from
+    /// `com.linkedin.android.sharing.compose.dash.ShareData`:
+    /// - `visibilityType`: `ANYONE` (public) or `CONNECTIONS_ONLY`
+    /// - `origin`: `FEED` (standard compose flow)
+    /// - `allowedScope`: `NONE` (no container/group context)
+    /// - `shareText`: `{ text: "..." }` matching `TextViewModel`
+    /// - `shareMediaForCreate`: absent (text-only, no media)
+    /// - `shareVisibility`: `0` (standard visibility enum ordinal)
+    ///
+    /// # Parameters
+    ///
+    /// - `text`: The post body text.
+    /// - `visibility`: Visibility setting. One of `ANYONE` or `CONNECTIONS_ONLY`.
+    ///
+    /// # Returns
+    ///
+    /// The raw JSON response from the API. On success LinkedIn returns the
+    /// created `Share` entity with `entityUrn` and `status`.
+    ///
+    /// # Warning
+    ///
+    /// This creates a **real public post** on your LinkedIn account. There is
+    /// no draft/preview mode. Use with extreme caution.
+    ///
+    /// See `re/create_post.md` for the full analysis.
+    pub async fn create_post(&self, text: &str, visibility: &str) -> Result<Value, Error> {
+        // Validate visibility parameter.
+        let vis = visibility.to_uppercase();
+        if vis != "ANYONE" && vis != "CONNECTIONS_ONLY" {
+            return Err(Error::Api {
+                status: 0,
+                body: format!(
+                    "invalid visibility '{}'. Must be ANYONE or CONNECTIONS_ONLY",
+                    visibility
+                ),
+            });
+        }
+
+        // Build the mutation variables matching the ShareData model structure.
+        // The entity is the "input" parameter for the CREATE mutation.
+        let variables = serde_json::json!({
+            "entity": {
+                "visibilityType": vis,
+                "origin": "FEED",
+                "allowedScope": "NONE",
+                "shareText": {
+                    "text": text
+                },
+                "shareVisibility": 0
+            }
+        });
+
+        self.graphql_post(
+            &variables,
+            "voyagerContentcreationDashShares.f8a4f57de961be2d370fbcc862e867cf",
+            "CreateContentcreationDashShares",
+        )
+        .await
+    }
+
     /// Fetch events (messages) within a specific conversation.
     ///
     /// Calls the Voyager GraphQL endpoint to fetch messages for a conversation.

@@ -116,6 +116,26 @@ enum FeedAction {
         #[arg(long)]
         json: bool,
     },
+    /// Create a new text post on your LinkedIn feed
+    ///
+    /// WARNING: This creates a REAL PUBLIC post on your LinkedIn account.
+    /// Use --yes to skip the confirmation prompt.
+    Post {
+        /// The text content of the post
+        text: String,
+
+        /// Post visibility: ANYONE (public) or CONNECTIONS_ONLY
+        #[arg(long, default_value = "ANYONE")]
+        visibility: String,
+
+        /// Skip confirmation prompt (required for non-interactive use)
+        #[arg(long)]
+        yes: bool,
+
+        /// Output raw JSON instead of human-readable format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -358,6 +378,17 @@ async fn main() {
                 json,
             } => {
                 if let Err(e) = cmd_feed_unreact(&post_urn, &reaction_type, json).await {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+            }
+            FeedAction::Post {
+                text,
+                visibility,
+                yes,
+                json,
+            } => {
+                if let Err(e) = cmd_feed_post(&text, &visibility, yes, json).await {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
@@ -1204,6 +1235,65 @@ async fn cmd_feed_unreact(
         println!("{}", pretty);
     } else {
         println!("Removed {} reaction from {}", rt_upper, post_urn);
+    }
+
+    Ok(())
+}
+
+/// Handle `feed post <text> [--visibility ANYONE] [--yes] [--json]`.
+///
+/// Creates a new text-only post on the authenticated user's LinkedIn feed.
+/// Requires `--yes` to confirm, since this creates a REAL PUBLIC post.
+async fn cmd_feed_post(
+    text: &str,
+    visibility: &str,
+    confirmed: bool,
+    raw_json: bool,
+) -> Result<(), String> {
+    let vis_upper = visibility.to_uppercase();
+    if vis_upper != "ANYONE" && vis_upper != "CONNECTIONS_ONLY" {
+        return Err(format!(
+            "invalid visibility '{}'. Must be ANYONE or CONNECTIONS_ONLY",
+            visibility
+        ));
+    }
+
+    if !confirmed {
+        // Show what would be posted and require confirmation.
+        eprintln!("WARNING: This will create a REAL post on your LinkedIn account!");
+        eprintln!();
+        eprintln!("  Visibility: {}", vis_upper);
+        eprintln!("  Text: {}", truncate_with_ellipsis(text, 200));
+        eprintln!();
+        eprintln!("Use --yes to confirm and publish this post.");
+        return Err("post not confirmed (use --yes to publish)".to_string());
+    }
+
+    let (client, _path) = load_session_client()?;
+
+    eprintln!("Creating post (visibility: {})...", vis_upper);
+    let result = client
+        .create_post(text, &vis_upper)
+        .await
+        .map_err(|e| format!("API call failed: {e}"))?;
+
+    if raw_json {
+        let pretty =
+            serde_json::to_string_pretty(&result).map_err(|e| format!("JSON format error: {e}"))?;
+        println!("{}", pretty);
+    } else {
+        // Try to extract the share URN from the response.
+        let urn = result
+            .get("data")
+            .and_then(|d| d.get("createContentcreationDashShares"))
+            .and_then(|c| c.get("entityUrn"))
+            .and_then(|v| v.as_str())
+            .or_else(|| result.get("entityUrn").and_then(|v| v.as_str()))
+            .unwrap_or("(unknown)");
+        println!("Post created successfully!");
+        println!("  URN: {}", urn);
+        println!("  Visibility: {}", vis_upper);
+        println!("  Text: {}", truncate_with_ellipsis(text, 100));
     }
 
     Ok(())
