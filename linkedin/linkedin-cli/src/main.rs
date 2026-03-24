@@ -109,6 +109,12 @@ enum ProfileAction {
         #[arg(long)]
         json: bool,
     },
+    /// Show who viewed your profile
+    Viewers {
+        /// Output raw JSON instead of human-readable format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -245,6 +251,12 @@ async fn main() {
             }
             ProfileAction::View { public_id, json } => {
                 if let Err(e) = cmd_profile_view(&public_id, json).await {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+            }
+            ProfileAction::Viewers { json } => {
+                if let Err(e) = cmd_profile_viewers(json).await {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
@@ -474,6 +486,231 @@ async fn cmd_profile_view(public_id: &str, raw_json: bool) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Handle `profile viewers [--json]`.
+///
+/// Loads the session, calls GET /voyager/api/identity/wvmpCards, and prints
+/// profile viewer data. The response uses deeply nested Rest.li union encoding.
+async fn cmd_profile_viewers(raw_json: bool) -> Result<(), String> {
+    let (client, _path) = load_session_client()?;
+
+    let value = client
+        .get_profile_viewers()
+        .await
+        .map_err(|e| format!("API call failed: {e}"))?;
+
+    if raw_json {
+        let pretty =
+            serde_json::to_string_pretty(&value).map_err(|e| format!("JSON format error: {e}"))?;
+        println!("{}", pretty);
+        return Ok(());
+    }
+
+    print_profile_viewers(&value);
+    Ok(())
+}
+
+/// Print a human-readable summary of the wvmpCards response.
+///
+/// The response has a deeply nested Rest.li union structure:
+/// - `elements[].value["...WvmpViewersCard"].insightCards[]`
+/// - Each insight card has `value["...WvmpSummaryInsightCard"]` with:
+///   - `numViewsChangeInPercentage` -- week-over-week view change
+///   - `cards[]` -- individual viewer entries, each with a union value
+fn print_profile_viewers(data: &serde_json::Value) {
+    let elements = match data.get("elements").and_then(|e| e.as_array()) {
+        Some(arr) => arr,
+        None => {
+            println!("(no viewer data)");
+            return;
+        }
+    };
+
+    let mut viewer_index = 0;
+
+    for element in elements {
+        // Unwrap Rest.li union: value["com.linkedin.voyager.identity.me.wvmpOverview.WvmpViewersCard"]
+        let viewers_card = element
+            .get("value")
+            .and_then(|v| v.get("com.linkedin.voyager.identity.me.wvmpOverview.WvmpViewersCard"));
+
+        let viewers_card = match viewers_card {
+            Some(c) => c,
+            None => continue,
+        };
+
+        let insight_cards = match viewers_card.get("insightCards").and_then(|i| i.as_array()) {
+            Some(arr) => arr,
+            None => continue,
+        };
+
+        for insight_card in insight_cards {
+            // Unwrap: value["...WvmpSummaryInsightCard"]
+            let summary = insight_card.get("value").and_then(|v| {
+                v.get("com.linkedin.voyager.identity.me.wvmpOverview.WvmpSummaryInsightCard")
+            });
+
+            let summary = match summary {
+                Some(s) => s,
+                None => continue,
+            };
+
+            // Print view change percentage header.
+            let pct_change = summary
+                .get("numViewsChangeInPercentage")
+                .and_then(|n| n.as_f64());
+            match pct_change {
+                Some(pct) => {
+                    let sign = if pct >= 0.0 { "+" } else { "" };
+                    println!("Profile viewers (change: {}{}%)", sign, pct as i64);
+                }
+                None => {
+                    println!("Profile viewers");
+                }
+            }
+            println!("---");
+
+            // Iterate individual viewer cards.
+            let cards = match summary.get("cards").and_then(|c| c.as_array()) {
+                Some(arr) => arr,
+                None => continue,
+            };
+
+            for card in cards {
+                let card_value = match card.get("value") {
+                    Some(v) => v,
+                    None => continue,
+                };
+
+                viewer_index += 1;
+
+                // Case 1: Named viewer (WvmpProfileViewCard)
+                if let Some(profile_card) =
+                    card_value.get("com.linkedin.voyager.identity.me.WvmpProfileViewCard")
+                {
+                    let (name, occupation) = extract_viewer_profile(profile_card);
+                    println!("[{}] {}", viewer_index, name);
+                    if !occupation.is_empty() {
+                        println!("    {}", occupation);
+                    }
+                    continue;
+                }
+
+                // Case 2: Private viewer (PrivateProfileViewer)
+                if let Some(private_card) =
+                    card_value.get("com.linkedin.voyager.identity.me.PrivateProfileViewer")
+                {
+                    let headline = private_card
+                        .get("headline")
+                        .and_then(|h| h.as_str())
+                        .unwrap_or("Private viewer");
+                    println!("[{}] (private) {}", viewer_index, headline);
+                    continue;
+                }
+
+                // Case 3: Aggregated/generic (WvmpGenericCard)
+                // The headline field is a TextViewModel with shape {text: "..."}.
+                if let Some(generic_card) =
+                    card_value.get("com.linkedin.voyager.identity.me.WvmpGenericCard")
+                {
+                    let text = generic_card
+                        .get("headline")
+                        .and_then(|h| h.get("text"))
+                        .and_then(|t| t.as_str())
+                        .or_else(|| generic_card.get("text").and_then(|t| t.as_str()))
+                        .unwrap_or("Anonymous viewer(s)");
+                    println!("[{}] (aggregated) {}", viewer_index, text);
+                    continue;
+                }
+
+                // Case 4: Anonymous viewers (WvmpAnonymousProfileViewCard)
+                if let Some(anon_card) =
+                    card_value.get("com.linkedin.voyager.identity.me.WvmpAnonymousProfileViewCard")
+                {
+                    let num = anon_card
+                        .get("numViewers")
+                        .and_then(|n| n.as_u64())
+                        .unwrap_or(1);
+                    let label = if num == 1 {
+                        "1 anonymous viewer".to_string()
+                    } else {
+                        format!("{} anonymous viewers", num)
+                    };
+                    println!("[{}] (anonymous) {}", viewer_index, label);
+                    continue;
+                }
+
+                // Case 5: Premium upsell card -- skip, not a real viewer.
+                if card_value
+                    .get("com.linkedin.voyager.identity.me.WvmpPremiumUpsellCard")
+                    .is_some()
+                {
+                    viewer_index -= 1; // don't count as a viewer entry
+                    continue;
+                }
+
+                // Fallback: unknown card type -- print the union key.
+                if let Some(obj) = card_value.as_object() {
+                    let key = obj.keys().next().unwrap_or(&String::new()).clone();
+                    println!("[{}] (unknown: {})", viewer_index, key);
+                } else {
+                    println!("[{}] (unknown card)", viewer_index);
+                }
+            }
+        }
+    }
+
+    if viewer_index == 0 {
+        println!("Profile viewers");
+        println!("---");
+        println!("(no viewers found)");
+    }
+}
+
+/// Extract name and occupation from a WvmpProfileViewCard.
+///
+/// The viewer profile is nested under:
+///   `viewer["com.linkedin.voyager.identity.me.FullProfileViewer"].profile.miniProfile`
+/// or directly as `viewer.miniProfile`.
+fn extract_viewer_profile(profile_card: &serde_json::Value) -> (String, String) {
+    // Try the full union path first.
+    let mini_profile = profile_card.get("viewer").and_then(|v| {
+        v.get("com.linkedin.voyager.identity.me.FullProfileViewer")
+            .and_then(|fp| fp.get("profile"))
+            .and_then(|p| p.get("miniProfile"))
+            .or_else(|| v.get("miniProfile"))
+            .or_else(|| v.get("profile").and_then(|p| p.get("miniProfile")))
+    });
+
+    let (name, occupation) = if let Some(mp) = mini_profile {
+        let first = mp.get("firstName").and_then(|v| v.as_str()).unwrap_or("");
+        let last = mp.get("lastName").and_then(|v| v.as_str()).unwrap_or("");
+        let occ = mp.get("occupation").and_then(|v| v.as_str()).unwrap_or("");
+        let full_name = format!("{} {}", first, last).trim().to_string();
+        (full_name, occ.to_string())
+    } else {
+        // Fallback: try top-level fields.
+        let name = profile_card
+            .get("viewerName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(unknown viewer)")
+            .to_string();
+        let occ = profile_card
+            .get("headline")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        (name, occ)
+    };
+
+    let display_name = if name.is_empty() {
+        "(unknown viewer)".to_string()
+    } else {
+        name
+    };
+
+    (display_name, occupation)
 }
 
 /// Print a human-readable summary of a Dash profile response.

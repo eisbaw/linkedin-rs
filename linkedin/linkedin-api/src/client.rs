@@ -798,6 +798,25 @@ impl LinkedInClient {
             })
     }
 
+    /// Fetch "who viewed my profile" data.
+    ///
+    /// Calls `GET /voyager/api/identity/wvmpCards` which returns the WVMP
+    /// (Who Viewed My Profile) cards. This is a legacy REST endpoint that
+    /// still works without Premium.
+    ///
+    /// The response uses deeply nested Rest.li union encoding with viewer
+    /// details (names, occupations), view count change percentage, and
+    /// aggregated/anonymous viewer entries.
+    ///
+    /// Returns the raw JSON response. The caller is responsible for
+    /// unwrapping the nested union structure.
+    ///
+    /// See `re/profile_viewers.md` for the endpoint documentation and
+    /// response structure.
+    pub async fn get_profile_viewers(&self) -> Result<Value, Error> {
+        self.get("identity/wvmpCards").await
+    }
+
     /// Fetch events (messages) within a specific conversation.
     ///
     /// Calls the Voyager GraphQL endpoint to fetch messages for a conversation.
