@@ -1,0 +1,3 @@
+[workspace]
+members = ["linkedin-api", "linkedin-cli"]
+resolver = "2"

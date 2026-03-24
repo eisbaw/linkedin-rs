@@ -1,0 +1,14 @@
+/home/mpedersen/topics/linkedIn_reversed/linkedin/target/debug/deps/thiserror-b2a5666c426dc650.d: /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /home/mpedersen/topics/linkedIn_reversed/linkedin/target/debug/build/thiserror-03a54f4f277b860b/out/private.rs
+
+/home/mpedersen/topics/linkedIn_reversed/linkedin/target/debug/deps/libthiserror-b2a5666c426dc650.rlib: /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /home/mpedersen/topics/linkedIn_reversed/linkedin/target/debug/build/thiserror-03a54f4f277b860b/out/private.rs
+
+/home/mpedersen/topics/linkedIn_reversed/linkedin/target/debug/deps/libthiserror-b2a5666c426dc650.rmeta: /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /home/mpedersen/topics/linkedIn_reversed/linkedin/target/debug/build/thiserror-03a54f4f277b860b/out/private.rs
+
+/home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/home/mpedersen/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/home/mpedersen/topics/linkedIn_reversed/linkedin/target/debug/build/thiserror-03a54f4f277b860b/out/private.rs:
+
+# env-dep:OUT_DIR=/home/mpedersen/topics/linkedIn_reversed/linkedin/target/debug/build/thiserror-03a54f4f277b860b/out

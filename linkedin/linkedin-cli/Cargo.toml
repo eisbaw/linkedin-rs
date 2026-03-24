@@ -1,0 +1,13 @@
+[package]
+name = "linkedin-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "linkedin-cli"
+path = "src/main.rs"
+
+[dependencies]
+linkedin-api = { path = "../linkedin-api" }
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
