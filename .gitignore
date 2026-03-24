@@ -7,7 +7,9 @@ analysis/
 reports/
 secrets/
 *.har
+har/
 *.pcap
 result
 target/
 linkedin/target/
+secrets/
