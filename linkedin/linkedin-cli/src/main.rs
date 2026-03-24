@@ -250,6 +250,23 @@ enum SearchAction {
         #[arg(long)]
         json: bool,
     },
+    /// Search for jobs by keywords
+    Jobs {
+        /// Search keywords
+        keywords: String,
+
+        /// Number of results to fetch (default: 10)
+        #[arg(long, default_value = "10")]
+        count: u32,
+
+        /// Pagination offset (default: 0)
+        #[arg(long, default_value = "0")]
+        start: u32,
+
+        /// Output raw JSON instead of human-readable format
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -479,6 +496,17 @@ async fn main() {
                 json,
             } => {
                 if let Err(e) = cmd_search_people(&keywords, start, count, json).await {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+            }
+            SearchAction::Jobs {
+                keywords,
+                count,
+                start,
+                json,
+            } => {
+                if let Err(e) = cmd_search_jobs(&keywords, start, count, json).await {
                     eprintln!("error: {e}");
                     process::exit(1);
                 }
@@ -1925,6 +1953,116 @@ fn print_search_entity(index: usize, entity: &serde_json::Value) {
     }
     if !location.is_empty() {
         println!("    location: {}", location);
+    }
+}
+
+/// Handle `search jobs <keywords> [--count N] [--start N] [--json]`.
+///
+/// Loads the session, calls the Voyager GraphQL `searchDashClustersByAll`
+/// endpoint with `resultType:List(JOBS)` and prints the results.
+async fn cmd_search_jobs(
+    keywords: &str,
+    start: u32,
+    count: u32,
+    raw_json: bool,
+) -> Result<(), String> {
+    let (client, _path) = load_session_client()?;
+
+    let value = client
+        .search_jobs(keywords, start, count)
+        .await
+        .map_err(|e| format!("API call failed: {e}"))?;
+
+    if raw_json {
+        let pretty =
+            serde_json::to_string_pretty(&value).map_err(|e| format!("JSON format error: {e}"))?;
+        println!("{}", pretty);
+        return Ok(());
+    }
+
+    // The jobsDashJobCardsByJobSearch response has the standard collection
+    // shape: elements (array of job cards), paging, metadata.
+    let resp: SearchResponse = serde_json::from_value(value.clone())
+        .map_err(|e| format!("failed to parse search response: {e}"))?;
+
+    if let Some(ref paging) = resp.paging {
+        print_paging_header(&format!("Job search results for '{}'", keywords), paging);
+    }
+    println!("---");
+
+    let mut result_idx = start as usize;
+    let mut any_results = false;
+    for element in &resp.elements {
+        // Each element has jobCard.jobPostingCard with the display fields.
+        let card = element
+            .get("jobCard")
+            .and_then(|jc| jc.get("jobPostingCard"));
+        if let Some(card) = card {
+            result_idx += 1;
+            any_results = true;
+            print_job_card(result_idx, card);
+            println!();
+        }
+    }
+
+    if !any_results {
+        println!("(no results)");
+    }
+
+    Ok(())
+}
+
+/// Print a brief human-readable summary of a single job search card.
+///
+/// The GraphQL `jobsDashJobCardsByJobSearch` response returns elements
+/// with `jobCard.jobPostingCard` objects containing:
+/// - `jobPosting.title`: job title
+/// - `primaryDescription.text`: company name
+/// - `secondaryDescription.text`: location
+/// - `cardActionV2.navigationAction.actionTarget`: job URL
+/// - `footerItems[].timeAt`: posted date (epoch millis)
+fn print_job_card(index: usize, card: &serde_json::Value) {
+    let title = card
+        .get("jobPosting")
+        .and_then(|jp| jp.get("title"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("(unknown)");
+
+    let company = card
+        .get("primaryDescription")
+        .and_then(|t| t.get("text"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let location = card
+        .get("secondaryDescription")
+        .and_then(|t| t.get("text"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // Extract job URL from the card action.
+    let job_url = card
+        .get("cardActionV2")
+        .and_then(|a| a.get("navigationAction"))
+        .and_then(|na| na.get("actionTarget"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    print!("[{}] {}", index, title);
+    println!();
+
+    if !company.is_empty() {
+        println!("    company: {}", company);
+    }
+    if !location.is_empty() {
+        println!("    location: {}", location);
+    }
+    if !job_url.is_empty() {
+        // Show just the job view path, not the full URL with tracking params
+        if let Some(path) = job_url.strip_prefix("https://www.linkedin.com") {
+            let clean = path.split('?').next().unwrap_or(path);
+            println!("    url: {}", clean);
+        }
     }
 }
 

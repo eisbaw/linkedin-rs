@@ -743,6 +743,57 @@ impl LinkedInClient {
             })
     }
 
+    /// Search for jobs by keywords using the Voyager GraphQL
+    /// `jobsDashJobCardsByJobSearch` finder.
+    ///
+    /// Job search uses a dedicated GraphQL query separate from the general
+    /// `searchDashClustersByAll` finder (which returns HTTP 501 for JOBS).
+    /// Discovered from `CareersGraphQLClient.jobCardsByJobSearch()` in the
+    /// decompiled international APK.
+    ///
+    /// The query variables use `JobSearchQueryForInput` which requires:
+    /// - `origin`: a `JobsMatchingOrigin` enum value (we use `FACETED_SEARCH`)
+    /// - `keywords`: optional search terms
+    /// - `selectedFilters`: optional filter map
+    ///
+    /// # Parameters
+    ///
+    /// - `keywords`: Search terms.
+    /// - `start`: 0-based pagination offset.
+    /// - `count`: Number of results per page.
+    pub async fn search_jobs(
+        &self,
+        keywords: &str,
+        start: u32,
+        count: u32,
+    ) -> Result<Value, Error> {
+        let restli_keywords = restli_encode_string(keywords);
+
+        // JobSearchQueryForInput record with required origin and optional keywords.
+        let variables = format!(
+            "(count:{count},includeJobState:true,query:(keywords:{restli_keywords},origin:FACETED_SEARCH),start:{start})"
+        );
+
+        let params = graphql_params(
+            &variables,
+            "voyagerJobsDashJobCards.4ef915ad5827cd8ea1351ad72f8e4268",
+            "JobCardsByJobSearch",
+        );
+        let raw = self.graphql_get(&params).await?;
+
+        // Unwrap the GraphQL envelope: data.jobsDashJobCardsByJobSearch
+        raw.get("data")
+            .and_then(|d| d.get("jobsDashJobCardsByJobSearch"))
+            .cloned()
+            .ok_or_else(|| Error::Api {
+                status: 0,
+                body: format!(
+                    "unexpected GraphQL response shape (missing data.jobsDashJobCardsByJobSearch): {}",
+                    serde_json::to_string(&raw).unwrap_or_default()
+                ),
+            })
+    }
+
     /// Fetch the user's notification cards.
     ///
     /// Uses the Voyager GraphQL endpoint with the
