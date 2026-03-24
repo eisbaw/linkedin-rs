@@ -903,6 +903,7 @@ dependencies = [
 name = "linkedin-cli"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "linkedin-api",
  "serde_json",

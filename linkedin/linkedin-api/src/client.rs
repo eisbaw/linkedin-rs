@@ -387,6 +387,50 @@ impl LinkedInClient {
     pub fn base_url(&self) -> &str {
         BASE_URL
     }
+
+    /// Fetch the user's messaging conversations.
+    ///
+    /// Calls `GET /voyager/api/messaging/conversations` with pagination.
+    /// Returns the raw JSON response containing `elements` (array of
+    /// `Conversation` items) and `paging`.
+    ///
+    /// # Parameters
+    ///
+    /// - `start`: 0-based offset for pagination.
+    /// - `count`: Number of conversations to request per page.
+    ///
+    /// See `re/api_endpoint_catalog.md` section 6 and `re/pegasus_models.md`
+    /// for the `Conversation` model definition.
+    pub async fn get_conversations(&self, start: u32, count: u32) -> Result<Value, Error> {
+        let path = format!("messaging/conversations?start={}&count={}", start, count);
+        self.get(&path).await
+    }
+
+    /// Fetch events (messages) within a specific conversation.
+    ///
+    /// Calls `GET /voyager/api/messaging/conversations/{id}/events` with pagination.
+    /// The `conversation_urn` should be the conversation ID portion of the URN
+    /// (e.g., the `2-abc123` part from `urn:li:messagingThread:2-abc123`).
+    ///
+    /// # Parameters
+    ///
+    /// - `conversation_urn`: The conversation ID (thread ID portion).
+    /// - `start`: 0-based offset for pagination.
+    /// - `count`: Number of events to request per page.
+    ///
+    /// See `re/pegasus_models.md` for the `Event` model definition.
+    pub async fn get_conversation_events(
+        &self,
+        conversation_urn: &str,
+        start: u32,
+        count: u32,
+    ) -> Result<Value, Error> {
+        let path = format!(
+            "messaging/conversations/{}/events?start={}&count={}",
+            conversation_urn, start, count
+        );
+        self.get(&path).await
+    }
 }
 
 impl Default for LinkedInClient {

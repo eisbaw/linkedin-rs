@@ -165,6 +165,169 @@ pub struct SocialActivityCounts {
     pub liked: Option<bool>,
 }
 
+/// Top-level response from the `messaging/conversations` endpoint.
+///
+/// Wraps a standard Rest.li collection of `Conversation` items.
+/// See `re/api_endpoint_catalog.md` section 6 and `re/pegasus_models.md`
+/// for the `Conversation` model definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationsResponse {
+    /// Array of conversation items.
+    #[serde(default)]
+    pub elements: Vec<Value>,
+
+    /// Pagination metadata for this page of results.
+    #[serde(default)]
+    pub paging: Option<Paging>,
+
+    /// Collection-level metadata (type varies by endpoint).
+    #[serde(default)]
+    pub metadata: Option<Value>,
+}
+
+/// A messaging conversation (thread).
+///
+/// Reference: `re/pegasus_models.md` -- `Conversation (voyager.messaging)`.
+/// Fields kept as `Option` since we haven't validated against live API yet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Conversation {
+    /// URN identifying this conversation, e.g. `urn:li:messagingThread:...`.
+    #[serde(default)]
+    pub entity_urn: Option<String>,
+
+    /// Backend URN.
+    #[serde(default)]
+    pub backend_urn: Option<String>,
+
+    /// Participants in this conversation (union: member/company/bot).
+    #[serde(default)]
+    pub participants: Option<Vec<Value>>,
+
+    /// Messages/events in this conversation (may be inline or empty).
+    #[serde(default)]
+    pub events: Option<Vec<Value>>,
+
+    /// Whether the conversation has been read.
+    #[serde(default)]
+    pub read: Option<bool>,
+
+    /// Whether the conversation is muted.
+    #[serde(default)]
+    pub muted: Option<bool>,
+
+    /// Whether the conversation is archived.
+    #[serde(default)]
+    pub archived: Option<bool>,
+
+    /// Whether the conversation is blocked.
+    #[serde(default)]
+    pub blocked: Option<bool>,
+
+    /// Unread message count.
+    #[serde(default)]
+    pub unread_count: Option<u32>,
+
+    /// Total number of events in the conversation.
+    #[serde(default)]
+    pub total_event_count: Option<u32>,
+
+    /// Group chat name (if any).
+    #[serde(default)]
+    pub name: Option<String>,
+
+    /// Whether this is with a non-connection.
+    #[serde(default)]
+    pub with_non_connection: Option<bool>,
+
+    /// Last activity timestamp.
+    #[serde(default)]
+    pub last_activity_at: Option<u64>,
+
+    /// Read receipts.
+    #[serde(default)]
+    pub receipts: Option<Vec<Value>>,
+
+    /// Notification status.
+    #[serde(default)]
+    pub notification_status: Option<String>,
+
+    /// Message request state (ACCEPTED, DECLINED, PENDING).
+    #[serde(default)]
+    pub message_request_state: Option<String>,
+
+    /// Catch-all for fields not explicitly modelled.
+    #[serde(flatten)]
+    pub extra: Option<std::collections::HashMap<String, Value>>,
+}
+
+/// A single messaging event (message, participant change, etc.).
+///
+/// Reference: `re/pegasus_models.md` -- `Event (voyager.messaging)`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessagingEvent {
+    /// URN identifying this event.
+    #[serde(default)]
+    pub entity_urn: Option<String>,
+
+    /// Backend URN.
+    #[serde(default)]
+    pub backend_urn: Option<String>,
+
+    /// Timestamp when the event was created (epoch millis).
+    #[serde(default)]
+    pub created_at: Option<u64>,
+
+    /// Timestamp when the event expires (epoch millis).
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+
+    /// The sender of this event (union: MessagingProfile).
+    #[serde(default)]
+    pub from: Option<Value>,
+
+    /// Event subtype (MEMBER_TO_MEMBER, INMAIL, etc.).
+    #[serde(default)]
+    pub subtype: Option<String>,
+
+    /// The event content (union: MessageEvent, ParticipantChangeEvent, etc.).
+    #[serde(default)]
+    pub event_content: Option<Value>,
+
+    /// Quick reply options.
+    #[serde(default)]
+    pub quick_replies: Option<Vec<Value>>,
+
+    /// URN of the previous event in the conversation.
+    #[serde(default)]
+    pub previous_event_in_conversation: Option<String>,
+
+    /// Catch-all for fields not explicitly modelled.
+    #[serde(flatten)]
+    pub extra: Option<std::collections::HashMap<String, Value>>,
+}
+
+/// Top-level response from the `messaging/conversations/{id}/events` endpoint.
+///
+/// Wraps a standard Rest.li collection of `MessagingEvent` items.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationEventsResponse {
+    /// Array of event items.
+    #[serde(default)]
+    pub elements: Vec<Value>,
+
+    /// Pagination metadata.
+    #[serde(default)]
+    pub paging: Option<Paging>,
+
+    /// Collection-level metadata.
+    #[serde(default)]
+    pub metadata: Option<Value>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,5 +375,79 @@ mod tests {
         assert_eq!(counts.num_comments, Some(5));
         assert_eq!(counts.liked, Some(true));
         assert!(counts.num_shares.is_none());
+    }
+
+    #[test]
+    fn conversation_deserializes_minimal() {
+        let json = r#"{}"#;
+        let conv: Conversation = serde_json::from_str(json).unwrap();
+        assert!(conv.entity_urn.is_none());
+        assert!(conv.participants.is_none());
+        assert!(conv.read.is_none());
+    }
+
+    #[test]
+    fn conversation_deserializes_with_fields() {
+        let json = r#"{
+            "entityUrn": "urn:li:messagingThread:2-abc123",
+            "read": true,
+            "unreadCount": 0,
+            "totalEventCount": 15,
+            "name": "Test Group",
+            "participants": []
+        }"#;
+        let conv: Conversation = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            conv.entity_urn.as_deref(),
+            Some("urn:li:messagingThread:2-abc123")
+        );
+        assert_eq!(conv.read, Some(true));
+        assert_eq!(conv.unread_count, Some(0));
+        assert_eq!(conv.total_event_count, Some(15));
+        assert_eq!(conv.name.as_deref(), Some("Test Group"));
+    }
+
+    #[test]
+    fn messaging_event_deserializes_minimal() {
+        let json = r#"{}"#;
+        let event: MessagingEvent = serde_json::from_str(json).unwrap();
+        assert!(event.entity_urn.is_none());
+        assert!(event.subtype.is_none());
+        assert!(event.event_content.is_none());
+    }
+
+    #[test]
+    fn messaging_event_deserializes_with_fields() {
+        let json = r#"{
+            "entityUrn": "urn:li:fs_event:abc123",
+            "createdAt": 1711234567890,
+            "subtype": "MEMBER_TO_MEMBER",
+            "eventContent": {
+                "com.linkedin.voyager.messaging.event.MessageEvent": {
+                    "body": "Hello!"
+                }
+            }
+        }"#;
+        let event: MessagingEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(event.entity_urn.as_deref(), Some("urn:li:fs_event:abc123"));
+        assert_eq!(event.created_at, Some(1711234567890));
+        assert_eq!(event.subtype.as_deref(), Some("MEMBER_TO_MEMBER"));
+        assert!(event.event_content.is_some());
+    }
+
+    #[test]
+    fn conversations_response_deserializes_empty() {
+        let json = r#"{"elements": [], "paging": {"start": 0, "count": 10}}"#;
+        let resp: ConversationsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.elements.is_empty());
+        assert_eq!(resp.paging.as_ref().unwrap().start, 0);
+    }
+
+    #[test]
+    fn conversation_events_response_handles_missing_fields() {
+        let json = r#"{}"#;
+        let resp: ConversationEventsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.elements.is_empty());
+        assert!(resp.paging.is_none());
     }
 }

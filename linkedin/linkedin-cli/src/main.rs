@@ -4,7 +4,7 @@ use std::process;
 use clap::{Parser, Subcommand};
 use linkedin_api::auth::Session;
 use linkedin_api::client::LinkedInClient;
-use linkedin_api::models::FeedResponse;
+use linkedin_api::models::{ConversationsResponse, FeedResponse};
 
 #[derive(Parser)]
 #[command(name = "linkedin-cli")]
@@ -27,7 +27,10 @@ enum Commands {
         action: ProfileAction,
     },
     /// Messaging operations
-    Messages,
+    Messages {
+        #[command(subcommand)]
+        action: MessagesAction,
+    },
     /// Feed and posts
     Feed {
         #[command(subcommand)]
@@ -89,6 +92,41 @@ enum ProfileAction {
     },
 }
 
+#[derive(Subcommand)]
+enum MessagesAction {
+    /// List conversations
+    List {
+        /// Number of conversations to fetch (default: 10)
+        #[arg(long, default_value = "10")]
+        count: u32,
+
+        /// Pagination offset (default: 0)
+        #[arg(long, default_value = "0")]
+        start: u32,
+
+        /// Output raw JSON instead of human-readable format
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read messages in a conversation
+    Read {
+        /// Conversation ID (thread ID portion of URN, e.g. 2-abc123)
+        conversation_id: String,
+
+        /// Number of messages to fetch (default: 20)
+        #[arg(long, default_value = "20")]
+        count: u32,
+
+        /// Pagination offset (default: 0)
+        #[arg(long, default_value = "0")]
+        start: u32,
+
+        /// Output raw JSON instead of human-readable format
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -125,9 +163,25 @@ async fn main() {
                 println!("Profile view for '{}': not yet implemented", id);
             }
         },
-        Commands::Messages => {
-            println!("Messages: not yet implemented");
-        }
+        Commands::Messages { action } => match action {
+            MessagesAction::List { count, start, json } => {
+                if let Err(e) = cmd_messages_list(start, count, json).await {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+            }
+            MessagesAction::Read {
+                conversation_id,
+                count,
+                start,
+                json,
+            } => {
+                if let Err(e) = cmd_messages_read(&conversation_id, start, count, json).await {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+            }
+        },
         Commands::Feed { action } => match action {
             FeedAction::List { count, start, json } => {
                 if let Err(e) = cmd_feed_list(start, count, json).await {
@@ -463,4 +517,302 @@ fn print_feed_item(index: usize, item: &serde_json::Value) {
         println!("    {}", commentary_display);
     }
     println!("    likes: {}  comments: {}", likes, comments);
+}
+
+/// Handle `messages list [--count N] [--start N] [--json]`.
+///
+/// Loads the session, calls GET /voyager/api/messaging/conversations with
+/// pagination params, and prints the results.
+async fn cmd_messages_list(start: u32, count: u32, raw_json: bool) -> Result<(), String> {
+    let (session, _path) = load_session()?;
+
+    let client =
+        LinkedInClient::with_session(&session).map_err(|e| format!("client error: {e}"))?;
+
+    let value = client
+        .get_conversations(start, count)
+        .await
+        .map_err(|e| format!("API call failed: {e}"))?;
+
+    if raw_json {
+        let pretty =
+            serde_json::to_string_pretty(&value).map_err(|e| format!("JSON format error: {e}"))?;
+        println!("{}", pretty);
+        return Ok(());
+    }
+
+    let resp: ConversationsResponse = serde_json::from_value(value.clone())
+        .map_err(|e| format!("failed to parse conversations response: {e}"))?;
+
+    if let Some(ref paging) = resp.paging {
+        let total_str = paging
+            .total
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        println!(
+            "Conversations (offset {}, showing {}, total {})",
+            paging.start, paging.count, total_str
+        );
+    }
+    println!("---");
+
+    if resp.elements.is_empty() {
+        println!("(no conversations)");
+        return Ok(());
+    }
+
+    for (i, element) in resp.elements.iter().enumerate() {
+        let idx = start as usize + i + 1;
+        print_conversation(idx, element);
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Handle `messages read <conversation_id> [--count N] [--start N] [--json]`.
+///
+/// Loads the session, calls GET /voyager/api/messaging/conversations/{id}/events
+/// with pagination params, and prints the messages.
+async fn cmd_messages_read(
+    conversation_id: &str,
+    start: u32,
+    count: u32,
+    raw_json: bool,
+) -> Result<(), String> {
+    let (session, _path) = load_session()?;
+
+    let client =
+        LinkedInClient::with_session(&session).map_err(|e| format!("client error: {e}"))?;
+
+    let value = client
+        .get_conversation_events(conversation_id, start, count)
+        .await
+        .map_err(|e| format!("API call failed: {e}"))?;
+
+    if raw_json {
+        let pretty =
+            serde_json::to_string_pretty(&value).map_err(|e| format!("JSON format error: {e}"))?;
+        println!("{}", pretty);
+        return Ok(());
+    }
+
+    let elements = value
+        .get("elements")
+        .and_then(|e| e.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    if let Some(paging) = value.get("paging") {
+        let pg_start = paging.get("start").and_then(|v| v.as_u64()).unwrap_or(0);
+        let pg_count = paging.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+        let total_str = paging
+            .get("total")
+            .and_then(|v| v.as_u64())
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        println!(
+            "Messages in {} (offset {}, showing {}, total {})",
+            conversation_id, pg_start, pg_count, total_str
+        );
+    }
+    println!("---");
+
+    if elements.is_empty() {
+        println!("(no messages)");
+        return Ok(());
+    }
+
+    for event in &elements {
+        print_messaging_event(event);
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Load the stored session or return a descriptive error.
+fn load_session() -> Result<(Session, std::path::PathBuf), String> {
+    let path = Session::default_path().map_err(|e| format!("{e}"))?;
+
+    if !path.exists() {
+        return Err(format!(
+            "no session found at {} -- run `auth login` first",
+            path.display()
+        ));
+    }
+
+    let session = Session::load(&path).map_err(|e| format!("{e}"))?;
+
+    if !session.is_valid() {
+        return Err("session is invalid (empty li_at cookie)".to_string());
+    }
+
+    Ok((session, path))
+}
+
+/// Print a brief human-readable summary of a single conversation.
+fn print_conversation(index: usize, conv: &serde_json::Value) {
+    let urn = conv.get("entityUrn").and_then(|u| u.as_str()).unwrap_or("");
+
+    // Extract conversation ID from URN for easy use with `messages read`.
+    let conv_id = urn.strip_prefix("urn:li:messagingThread:").unwrap_or(urn);
+
+    let read = conv.get("read").and_then(|r| r.as_bool()).unwrap_or(true);
+    let unread_marker = if read { " " } else { "*" };
+
+    let unread_count = conv
+        .get("unreadCount")
+        .and_then(|n| n.as_u64())
+        .unwrap_or(0);
+
+    // Try to extract participant names.
+    let participants = extract_participant_names(conv);
+
+    // Try to get the last message preview from inline events.
+    let last_message = conv
+        .get("events")
+        .and_then(|e| e.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(extract_message_body)
+        .unwrap_or_default();
+
+    let last_msg_display = if last_message.len() > 80 {
+        format!("{}...", &last_message[..80])
+    } else {
+        last_message
+    };
+
+    // Group chat name.
+    let name = conv.get("name").and_then(|n| n.as_str()).unwrap_or("");
+
+    let display_name = if !name.is_empty() {
+        name.to_string()
+    } else if !participants.is_empty() {
+        participants.join(", ")
+    } else {
+        "(unknown)".to_string()
+    };
+
+    println!(
+        "[{}]{} {} (id: {})",
+        index, unread_marker, display_name, conv_id
+    );
+    if unread_count > 0 {
+        println!("    unread: {}", unread_count);
+    }
+    if !last_msg_display.is_empty() {
+        println!("    last: {}", last_msg_display);
+    }
+}
+
+/// Extract participant names from a conversation's participants array.
+fn extract_participant_names(conv: &serde_json::Value) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(participants) = conv.get("participants").and_then(|p| p.as_array()) {
+        for participant in participants {
+            // Participants are a union type; try MessagingMember path.
+            let name = participant
+                .get("com.linkedin.voyager.messaging.MessagingMember")
+                .or_else(|| participant.get("messagingMember"))
+                .and_then(|member| member.get("miniProfile"))
+                .and_then(|profile| {
+                    let first = profile
+                        .get("firstName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let last = profile
+                        .get("lastName")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if first.is_empty() && last.is_empty() {
+                        None
+                    } else {
+                        Some(format!("{} {}", first, last).trim().to_string())
+                    }
+                });
+            if let Some(n) = name {
+                names.push(n);
+            }
+        }
+    }
+    names
+}
+
+/// Extract message body text from an event's eventContent.
+fn extract_message_body(event: &serde_json::Value) -> Option<String> {
+    let content = event.get("eventContent")?;
+    // eventContent is a union; try MessageEvent variant.
+    let msg = content
+        .get("com.linkedin.voyager.messaging.event.MessageEvent")
+        .or_else(|| content.get("messageEvent"))?;
+
+    // Prefer attributedBody.text, fall back to body.
+    let body = msg
+        .get("attributedBody")
+        .and_then(|ab| ab.get("text"))
+        .and_then(|t| t.as_str())
+        .or_else(|| msg.get("body").and_then(|b| b.as_str()))?;
+
+    if body.is_empty() {
+        None
+    } else {
+        Some(body.to_string())
+    }
+}
+
+/// Print a single messaging event in human-readable format.
+fn print_messaging_event(event: &serde_json::Value) {
+    let subtype = event
+        .get("subtype")
+        .and_then(|s| s.as_str())
+        .unwrap_or("UNKNOWN");
+
+    // Timestamp.
+    let created_at = event.get("createdAt").and_then(|c| c.as_u64()).unwrap_or(0);
+    let time_str = if created_at > 0 {
+        // Convert epoch millis to a readable format.
+        let secs = (created_at / 1000) as i64;
+        let nanos = ((created_at % 1000) * 1_000_000) as u32;
+        chrono::DateTime::from_timestamp(secs, nanos)
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .unwrap_or_else(|| created_at.to_string())
+    } else {
+        String::new()
+    };
+
+    // Sender name.
+    let sender = event
+        .get("from")
+        .and_then(|from| {
+            from.get("com.linkedin.voyager.messaging.MessagingMember")
+                .or_else(|| from.get("messagingMember"))
+        })
+        .and_then(|member| member.get("miniProfile"))
+        .and_then(|profile| {
+            let first = profile
+                .get("firstName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let last = profile
+                .get("lastName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if first.is_empty() && last.is_empty() {
+                None
+            } else {
+                Some(format!("{} {}", first, last).trim().to_string())
+            }
+        })
+        .unwrap_or_else(|| "(unknown)".to_string());
+
+    // Message body.
+    let body = extract_message_body(event).unwrap_or_else(|| format!("[{} event]", subtype));
+
+    if !time_str.is_empty() {
+        println!("[{}] {}", time_str, sender);
+    } else {
+        println!("{}", sender);
+    }
+    println!("  {}", body);
 }
