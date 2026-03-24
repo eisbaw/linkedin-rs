@@ -1218,24 +1218,43 @@ impl LinkedInClient {
 
         // Build the mutation variables matching the ShareData model structure.
         // The entity is the "input" parameter for the CREATE mutation.
-        let variables = serde_json::json!({
-            "entity": {
-                "visibilityType": vis,
-                "origin": "FEED",
-                "allowedScope": "NONE",
-                "shareText": {
-                    "text": text
-                },
-                "shareVisibility": 0
-            }
+        // Captured from live browser traffic via Chrome DevTools MCP.
+        // The web client sends variables + queryId in the POST body (not URL params).
+        // Key differences from the mobile APK:
+        // - Top-level key is "post" (not "entity")
+        // - Uses "attributesV2" (not "attributes")
+        // - visibilityDataUnion wraps "visibilityType" (not "visibilityTypeValue")
+        let body = serde_json::json!({
+            "variables": {
+                "post": {
+                    "allowedCommentersScope": "ALL",
+                    "intendedShareLifeCycleState": "PUBLISHED",
+                    "origin": "FEED",
+                    "visibilityDataUnion": {
+                        "visibilityType": vis
+                    },
+                    "commentary": {
+                        "text": text,
+                        "attributesV2": []
+                    }
+                }
+            },
+            "queryId": "voyagerContentcreationDashShares.279996efa5064c01775d5aff003d9377",
+            "includeWebMetadata": true
         });
 
-        self.graphql_post(
-            &variables,
-            "voyagerContentcreationDashShares.f8a4f57de961be2d370fbcc862e867cf",
-            "CreateContentcreationDashShares",
-        )
-        .await
+        let url = format!(
+            "{}{}graphql?action=execute&queryId=voyagerContentcreationDashShares.279996efa5064c01775d5aff003d9377",
+            BASE_URL, API_PREFIX
+        );
+        let resp = self
+            .http
+            .post(&url)
+            .header("Csrf-Token", &self.jsessionid)
+            .json(&body)
+            .send()
+            .await?;
+        check_response(resp).await
     }
 
     /// Fetch events (messages) within a specific conversation.
