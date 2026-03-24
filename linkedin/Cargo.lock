@@ -905,6 +905,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "linkedin-api",
+ "serde_json",
  "tokio",
 ]
 

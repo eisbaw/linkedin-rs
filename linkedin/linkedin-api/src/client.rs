@@ -283,6 +283,7 @@ impl LinkedInClient {
     /// For example, `client.get("me")` requests `https://www.linkedin.com/voyager/api/me`.
     ///
     /// The CSRF token header is added automatically.
+    /// Returns an [`Error::Api`] if the server responds with a non-success status code.
     pub async fn get(&self, path: &str) -> Result<Value, Error> {
         let url = format!("{}{}{}", BASE_URL, API_PREFIX, path);
         let resp = self
@@ -291,8 +292,7 @@ impl LinkedInClient {
             .header("Csrf-Token", &self.jsessionid)
             .send()
             .await?;
-        let json = resp.json::<Value>().await?;
-        Ok(json)
+        check_response(resp).await
     }
 
     /// Send a POST request to a Voyager API endpoint with a JSON body.
@@ -301,6 +301,7 @@ impl LinkedInClient {
     /// The `body` is serialized as JSON in the request body.
     ///
     /// The CSRF token header is added automatically.
+    /// Returns an [`Error::Api`] if the server responds with a non-success status code.
     pub async fn post(&self, path: &str, body: &Value) -> Result<Value, Error> {
         let url = format!("{}{}{}", BASE_URL, API_PREFIX, path);
         let resp = self
@@ -310,8 +311,37 @@ impl LinkedInClient {
             .json(body)
             .send()
             .await?;
-        let json = resp.json::<Value>().await?;
-        Ok(json)
+        check_response(resp).await
+    }
+
+    /// Send a GET request to an arbitrary path on the LinkedIn host.
+    ///
+    /// Unlike [`get`](Self::get), the `path` is NOT prefixed with `/voyager/api/`.
+    /// Use this for endpoints outside the Voyager API prefix (e.g., `/uas/authenticate`).
+    ///
+    /// The `path` should start with `/`. The CSRF token header is added automatically.
+    /// Returns an [`Error::Api`] if the server responds with a non-success status code.
+    pub async fn api_get(&self, path: &str) -> Result<Value, Error> {
+        let url = format!("{}{}", BASE_URL, path);
+        let resp = self
+            .http
+            .get(&url)
+            .header("Csrf-Token", &self.jsessionid)
+            .send()
+            .await?;
+        check_response(resp).await
+    }
+
+    /// Fetch the authenticated user's own profile (`/voyager/api/me`).
+    ///
+    /// This is the simplest authenticated endpoint and serves as a session
+    /// validation check. If the `li_at` cookie is expired or invalid, LinkedIn
+    /// returns HTTP 401.
+    ///
+    /// Returns the raw JSON response from the `me` endpoint, which contains
+    /// fields like `miniProfile`, `plainId`, `publicContactInfo`, etc.
+    pub async fn get_me(&self) -> Result<Value, Error> {
+        self.get("me").await
     }
 
     /// Returns the raw reqwest client for advanced use (e.g., auth endpoints
@@ -414,6 +444,33 @@ fn build_x_li_track(device_id: &str) -> String {
     });
 
     track.to_string()
+}
+
+/// Check an HTTP response for error status codes and parse the body as JSON.
+///
+/// On success (2xx), parses the response body as JSON and returns it.
+/// On 401, returns [`Error::Auth`] with the response body for context.
+/// On other non-success status codes, returns [`Error::Api`].
+async fn check_response(resp: reqwest::Response) -> Result<Value, Error> {
+    let status = resp.status();
+    if status.is_success() {
+        let json = resp.json::<Value>().await?;
+        return Ok(json);
+    }
+
+    let status_code = status.as_u16();
+    let body = resp.text().await.unwrap_or_default();
+
+    if status_code == 401 {
+        return Err(Error::Auth(format!(
+            "session expired or invalid (HTTP 401): {body}"
+        )));
+    }
+
+    Err(Error::Api {
+        status: status_code,
+        body,
+    })
 }
 
 #[cfg(test)]
