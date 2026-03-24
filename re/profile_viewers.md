@@ -67,7 +67,7 @@ The response uses deeply nested Rest.li union encoding. The top-level shape:
             "firstName": "Jane",
             "lastName": "Doe",
             "occupation": "Software Engineer at Example Corp",
-            "entityUrn": "urn:li:fs_miniProfile:...",
+            "entityUrn": "urn:li:fs_miniProfile:ACoAABxxxxxxxxx",
             "publicIdentifier": "jane-doe-123"
           }
         }
