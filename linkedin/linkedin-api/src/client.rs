@@ -428,6 +428,27 @@ impl LinkedInClient {
         self.get(&path).await
     }
 
+    /// Fetch the user's connections.
+    ///
+    /// Calls `GET /voyager/api/relationships/connections` with pagination and
+    /// sort order. Returns the raw JSON response containing `elements` (array
+    /// of `Connection` items) and `paging`.
+    ///
+    /// # Parameters
+    ///
+    /// - `start`: 0-based offset for pagination.
+    /// - `count`: Number of connections to request per page.
+    ///
+    /// See `re/api_endpoint_catalog.md` section 8 and `re/pegasus_models.md`
+    /// for the `Connection` model definition.
+    pub async fn get_connections(&self, start: u32, count: u32) -> Result<Value, Error> {
+        let path = format!(
+            "relationships/connections?start={}&count={}&sortType=RECENTLY_ADDED",
+            start, count
+        );
+        self.get(&path).await
+    }
+
     /// Fetch events (messages) within a specific conversation.
     ///
     /// Calls `GET /voyager/api/messaging/conversations/{id}/events` with pagination.

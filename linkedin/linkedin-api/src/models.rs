@@ -576,6 +576,67 @@ pub struct ConversationEventsResponse {
     pub metadata: Option<Value>,
 }
 
+/// Top-level response from the `relationships/connections` endpoint.
+///
+/// Wraps a standard Rest.li collection of `Connection` items.
+/// See `re/api_endpoint_catalog.md` section 8 and `re/pegasus_models.md`
+/// for the `Connection` model definition.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionsResponse {
+    /// Array of connection items.
+    #[serde(default)]
+    pub elements: Vec<Value>,
+
+    /// Pagination metadata for this page of results.
+    #[serde(default)]
+    pub paging: Option<Paging>,
+
+    /// Collection-level metadata (type varies by endpoint).
+    #[serde(default)]
+    pub metadata: Option<Value>,
+}
+
+/// A connection (1st-degree network member).
+///
+/// Reference: `re/pegasus_models.md` -- `Connection (voyager.relationships.shared.connection)`.
+/// Fields kept as `Option` since we haven't validated against live API yet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    /// URN identifying this connection, e.g. `urn:li:fs_connection:ACoAABxxxxxx`.
+    #[serde(default)]
+    pub entity_urn: Option<String>,
+
+    /// Embedded mini profile of the connected member.
+    #[serde(default)]
+    pub mini_profile: Option<Value>,
+
+    /// Phone numbers shared by this connection.
+    #[serde(default)]
+    pub phone_numbers: Option<Vec<Value>>,
+
+    /// Primary email address of this connection (if shared).
+    #[serde(default)]
+    pub primary_email_address: Option<String>,
+
+    /// Twitter handles of this connection.
+    #[serde(default)]
+    pub twitter_handles: Option<Vec<Value>>,
+
+    /// WeChat contact info.
+    #[serde(default)]
+    pub we_chat_contact_info: Option<Value>,
+
+    /// Timestamp when the connection was established (epoch millis).
+    #[serde(default)]
+    pub created_at: Option<u64>,
+
+    /// Catch-all for fields not explicitly modelled.
+    #[serde(flatten)]
+    pub extra: Option<std::collections::HashMap<String, Value>>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -794,5 +855,55 @@ mod tests {
         assert_eq!(edu.degree_name.as_deref(), Some("BS"));
         assert_eq!(edu.field_of_study.as_deref(), Some("Computer Science"));
         assert!(edu.time_period.is_some());
+    }
+
+    #[test]
+    fn connection_deserializes_minimal() {
+        let json = r#"{}"#;
+        let conn: Connection = serde_json::from_str(json).unwrap();
+        assert!(conn.entity_urn.is_none());
+        assert!(conn.mini_profile.is_none());
+        assert!(conn.created_at.is_none());
+    }
+
+    #[test]
+    fn connection_deserializes_with_fields() {
+        let json = r#"{
+            "entityUrn": "urn:li:fs_connection:ACoAABxxxxxx",
+            "miniProfile": {
+                "firstName": "Alice",
+                "lastName": "Smith",
+                "occupation": "Engineer at Acme"
+            },
+            "createdAt": 1711234567890,
+            "primaryEmailAddress": "alice@example.com"
+        }"#;
+        let conn: Connection = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            conn.entity_urn.as_deref(),
+            Some("urn:li:fs_connection:ACoAABxxxxxx")
+        );
+        assert!(conn.mini_profile.is_some());
+        assert_eq!(conn.created_at, Some(1711234567890));
+        assert_eq!(
+            conn.primary_email_address.as_deref(),
+            Some("alice@example.com")
+        );
+    }
+
+    #[test]
+    fn connections_response_deserializes_empty() {
+        let json = r#"{"elements": [], "paging": {"start": 0, "count": 10}}"#;
+        let resp: ConnectionsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.elements.is_empty());
+        assert_eq!(resp.paging.as_ref().unwrap().start, 0);
+    }
+
+    #[test]
+    fn connections_response_handles_missing_fields() {
+        let json = r#"{}"#;
+        let resp: ConnectionsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.elements.is_empty());
+        assert!(resp.paging.is_none());
     }
 }

@@ -4,7 +4,7 @@ use std::process;
 use clap::{Parser, Subcommand};
 use linkedin_api::auth::Session;
 use linkedin_api::client::LinkedInClient;
-use linkedin_api::models::{ConversationsResponse, FeedResponse};
+use linkedin_api::models::{ConnectionsResponse, ConversationsResponse, FeedResponse};
 
 #[derive(Parser)]
 #[command(name = "linkedin-cli")]
@@ -37,7 +37,10 @@ enum Commands {
         action: FeedAction,
     },
     /// Connection management
-    Connections,
+    Connections {
+        #[command(subcommand)]
+        action: ConnectionsAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -89,6 +92,24 @@ enum ProfileAction {
     View {
         /// LinkedIn public identifier (vanity URL slug, e.g. john-doe-123)
         public_id: String,
+
+        /// Output raw JSON instead of human-readable format
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConnectionsAction {
+    /// List connections
+    List {
+        /// Number of connections to fetch (default: 10)
+        #[arg(long, default_value = "10")]
+        count: u32,
+
+        /// Pagination offset (default: 0)
+        #[arg(long, default_value = "0")]
+        start: u32,
 
         /// Output raw JSON instead of human-readable format
         #[arg(long)]
@@ -197,9 +218,14 @@ async fn main() {
                 }
             }
         },
-        Commands::Connections => {
-            println!("Connections: not yet implemented");
-        }
+        Commands::Connections { action } => match action {
+            ConnectionsAction::List { count, start, json } => {
+                if let Err(e) = cmd_connections_list(start, count, json).await {
+                    eprintln!("error: {e}");
+                    process::exit(1);
+                }
+            }
+        },
     }
 }
 
@@ -812,6 +838,107 @@ async fn cmd_messages_read(
     }
 
     Ok(())
+}
+
+/// Handle `connections list [--count N] [--start N] [--json]`.
+///
+/// Loads the session, calls GET /voyager/api/relationships/connections with
+/// pagination params sorted by RECENTLY_ADDED, and prints the results.
+async fn cmd_connections_list(start: u32, count: u32, raw_json: bool) -> Result<(), String> {
+    let (session, _path) = load_session()?;
+
+    let client =
+        LinkedInClient::with_session(&session).map_err(|e| format!("client error: {e}"))?;
+
+    let value = client
+        .get_connections(start, count)
+        .await
+        .map_err(|e| format!("API call failed: {e}"))?;
+
+    if raw_json {
+        let pretty =
+            serde_json::to_string_pretty(&value).map_err(|e| format!("JSON format error: {e}"))?;
+        println!("{}", pretty);
+        return Ok(());
+    }
+
+    let resp: ConnectionsResponse = serde_json::from_value(value.clone())
+        .map_err(|e| format!("failed to parse connections response: {e}"))?;
+
+    if let Some(ref paging) = resp.paging {
+        let total_str = paging
+            .total
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "?".to_string());
+        println!(
+            "Connections (offset {}, showing {}, total {})",
+            paging.start, paging.count, total_str
+        );
+    }
+    println!("---");
+
+    if resp.elements.is_empty() {
+        println!("(no connections)");
+        return Ok(());
+    }
+
+    for (i, element) in resp.elements.iter().enumerate() {
+        let idx = start as usize + i + 1;
+        print_connection(idx, element);
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Print a brief human-readable summary of a single connection.
+fn print_connection(index: usize, conn: &serde_json::Value) {
+    // Extract name and headline from the embedded miniProfile.
+    let mini = conn.get("miniProfile");
+
+    let name = mini
+        .and_then(|m| {
+            let first = m.get("firstName").and_then(|v| v.as_str()).unwrap_or("");
+            let last = m.get("lastName").and_then(|v| v.as_str()).unwrap_or("");
+            if first.is_empty() && last.is_empty() {
+                None
+            } else {
+                Some(format!("{} {}", first, last).trim().to_string())
+            }
+        })
+        .unwrap_or_else(|| "(unknown)".to_string());
+
+    let headline = mini
+        .and_then(|m| m.get("occupation").and_then(|v| v.as_str()))
+        .unwrap_or("");
+
+    // Connected-since date from createdAt (epoch millis).
+    let connected_since = conn
+        .get("createdAt")
+        .and_then(|c| c.as_u64())
+        .and_then(|millis| {
+            let secs = (millis / 1000) as i64;
+            chrono::DateTime::from_timestamp(secs, 0).map(|dt| dt.format("%Y-%m-%d").to_string())
+        })
+        .unwrap_or_default();
+
+    // Public identifier for reference.
+    let pub_id = mini
+        .and_then(|m| m.get("publicIdentifier").and_then(|v| v.as_str()))
+        .unwrap_or("");
+
+    print!("[{}] {}", index, name);
+    if !pub_id.is_empty() {
+        print!(" ({})", pub_id);
+    }
+    println!();
+
+    if !headline.is_empty() {
+        println!("    {}", headline);
+    }
+    if !connected_since.is_empty() {
+        println!("    connected since: {}", connected_since);
+    }
 }
 
 /// Load the stored session or return a descriptive error.
