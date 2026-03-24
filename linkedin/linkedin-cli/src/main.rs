@@ -1285,33 +1285,12 @@ fn print_feed_item(index: usize, item: &serde_json::Value) {
     println!("    likes: {}  comments: {}", likes, comments);
 }
 
-/// Valid reaction type strings accepted by the LinkedIn API.
-///
-/// Extracted from `ReactionType.java` in the decompiled international APK
-/// (`com.linkedin.android.pegasus.dash.gen.voyager.dash.feed.social`).
-const VALID_REACTION_TYPES: &[&str] = &[
-    "LIKE",
-    "PRAISE",
-    "EMPATHY",
-    "INTEREST",
-    "APPRECIATION",
-    "ENTERTAINMENT",
-    "CELEBRATION",
-];
-
 /// Handle `feed react <post_urn> [--type LIKE] [--json]`.
 ///
 /// Reacts to a feed post with the specified reaction type.
+/// Reaction type validation is handled by the API layer.
 async fn cmd_feed_react(post_urn: &str, reaction_type: &str, raw_json: bool) -> Result<(), String> {
     let rt_upper = reaction_type.to_uppercase();
-    if !VALID_REACTION_TYPES.contains(&rt_upper.as_str()) {
-        return Err(format!(
-            "invalid reaction type '{}'. Valid types: {}",
-            reaction_type,
-            VALID_REACTION_TYPES.join(", ")
-        ));
-    }
-
     let (client, _path) = load_session_client()?;
 
     eprintln!("Reacting to {} with {}...", post_urn, rt_upper);
@@ -1340,14 +1319,6 @@ async fn cmd_feed_unreact(
     raw_json: bool,
 ) -> Result<(), String> {
     let rt_upper = reaction_type.to_uppercase();
-    if !VALID_REACTION_TYPES.contains(&rt_upper.as_str()) {
-        return Err(format!(
-            "invalid reaction type '{}'. Valid types: {}",
-            reaction_type,
-            VALID_REACTION_TYPES.join(", ")
-        ));
-    }
-
     let (client, _path) = load_session_client()?;
 
     eprintln!("Removing {} reaction from {}...", rt_upper, post_urn);

@@ -23,4 +23,8 @@ pub enum Error {
         /// Response body (may be JSON error or empty).
         body: String,
     },
+
+    /// Invalid input provided by the caller.
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }

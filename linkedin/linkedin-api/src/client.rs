@@ -281,21 +281,7 @@ impl LinkedInClient {
             .send()
             .await?;
         let json = check_response(resp).await?;
-
-        // Check for GraphQL-level errors (HTTP 200 but logical error).
-        if let Some(errors) = json.get("errors").and_then(|e| e.as_array()) {
-            if !errors.is_empty() {
-                let messages: Vec<&str> = errors
-                    .iter()
-                    .filter_map(|e| e.get("message").and_then(|m| m.as_str()))
-                    .collect();
-                return Err(Error::Api {
-                    status: 200,
-                    body: format!("GraphQL errors: {}", messages.join("; ")),
-                });
-            }
-        }
-
+        check_graphql_errors(&json)?;
         Ok(json)
     }
 
@@ -351,21 +337,7 @@ impl LinkedInClient {
                 return Ok(Value::Null);
             }
             let json: Value = serde_json::from_str(&text)?;
-
-            // Check for GraphQL-level errors.
-            if let Some(errors) = json.get("errors").and_then(|e| e.as_array()) {
-                if !errors.is_empty() {
-                    let messages: Vec<&str> = errors
-                        .iter()
-                        .filter_map(|e| e.get("message").and_then(|m| m.as_str()))
-                        .collect();
-                    return Err(Error::Api {
-                        status: 200,
-                        body: format!("GraphQL errors: {}", messages.join("; ")),
-                    });
-                }
-            }
-
+            check_graphql_errors(&json)?;
             return Ok(json);
         }
 
@@ -468,18 +440,18 @@ impl LinkedInClient {
         );
         let raw = self.graphql_get(&params).await?;
 
-        // Unwrap the GraphQL envelope:
+        // Unwrap the GraphQL envelope and extract first element:
         //   data.identityDashProfilesByMemberIdentity.elements[0]
-        raw.get("data")
-            .and_then(|d| d.get("identityDashProfilesByMemberIdentity"))
-            .and_then(|c| c.get("elements"))
+        let collection = unwrap_graphql(&raw, "identityDashProfilesByMemberIdentity")?;
+        collection
+            .get("elements")
             .and_then(|e| e.as_array())
             .and_then(|arr| arr.first())
             .cloned()
             .ok_or_else(|| Error::Api {
                 status: 0,
                 body: format!(
-                    "unexpected GraphQL response shape (missing data.identityDashProfilesByMemberIdentity.elements): {}",
+                    "unexpected GraphQL response shape (missing elements[0] in identityDashProfilesByMemberIdentity): {}",
                     serde_json::to_string(&raw).unwrap_or_default()
                 ),
             })
@@ -514,16 +486,16 @@ impl LinkedInClient {
         let raw = self.graphql_get(&params).await?;
 
         // Unwrap the GraphQL envelope, same structure as get_profile.
-        raw.get("data")
-            .and_then(|d| d.get("identityDashProfilesByMemberIdentity"))
-            .and_then(|c| c.get("elements"))
+        let collection = unwrap_graphql(&raw, "identityDashProfilesByMemberIdentity")?;
+        collection
+            .get("elements")
             .and_then(|e| e.as_array())
             .and_then(|arr| arr.first())
             .cloned()
             .ok_or_else(|| Error::Api {
                 status: 0,
                 body: format!(
-                    "unexpected GraphQL response shape (missing data.identityDashProfilesByMemberIdentity.elements): {}",
+                    "unexpected GraphQL response shape (missing elements[0] in identityDashProfilesByMemberIdentity): {}",
                     serde_json::to_string(&raw).unwrap_or_default()
                 ),
             })
@@ -650,16 +622,7 @@ impl LinkedInClient {
         // Unwrap the GraphQL envelope:
         //   data.messengerConversationsByCategory
         // which contains { elements, paging }.
-        raw.get("data")
-            .and_then(|d| d.get("messengerConversationsByCategory"))
-            .cloned()
-            .ok_or_else(|| Error::Api {
-                status: 0,
-                body: format!(
-                    "unexpected GraphQL response shape (missing data.messengerConversationsByCategory): {}",
-                    serde_json::to_string(&raw).unwrap_or_default()
-                ),
-            })
+        unwrap_graphql(&raw, "messengerConversationsByCategory")
     }
 
     /// Fetch the user's connections.
@@ -731,16 +694,7 @@ impl LinkedInClient {
 
         // Unwrap the GraphQL envelope: data.searchDashClustersByAll contains
         // the collection with `elements`, `paging`, and `metadata`.
-        raw.get("data")
-            .and_then(|d| d.get("searchDashClustersByAll"))
-            .cloned()
-            .ok_or_else(|| Error::Api {
-                status: 0,
-                body: format!(
-                    "unexpected GraphQL response shape (missing data.searchDashClustersByAll): {}",
-                    serde_json::to_string(&raw).unwrap_or_default()
-                ),
-            })
+        unwrap_graphql(&raw, "searchDashClustersByAll")
     }
 
     /// Search for jobs by keywords using the Voyager GraphQL
@@ -782,16 +736,7 @@ impl LinkedInClient {
         let raw = self.graphql_get(&params).await?;
 
         // Unwrap the GraphQL envelope: data.jobsDashJobCardsByJobSearch
-        raw.get("data")
-            .and_then(|d| d.get("jobsDashJobCardsByJobSearch"))
-            .cloned()
-            .ok_or_else(|| Error::Api {
-                status: 0,
-                body: format!(
-                    "unexpected GraphQL response shape (missing data.jobsDashJobCardsByJobSearch): {}",
-                    serde_json::to_string(&raw).unwrap_or_default()
-                ),
-            })
+        unwrap_graphql(&raw, "jobsDashJobCardsByJobSearch")
     }
 
     /// Fetch the user's notification cards.
@@ -831,16 +776,7 @@ impl LinkedInClient {
         // Unwrap the GraphQL envelope:
         //   data.identityDashNotificationCardsByFilterVanityName
         // which contains { elements, paging, metadata }.
-        raw.get("data")
-            .and_then(|d| d.get("identityDashNotificationCardsByFilterVanityName"))
-            .cloned()
-            .ok_or_else(|| Error::Api {
-                status: 0,
-                body: format!(
-                    "unexpected GraphQL response shape (missing data.identityDashNotificationCardsByFilterVanityName): {}",
-                    serde_json::to_string(&raw).unwrap_or_default()
-                ),
-            })
+        unwrap_graphql(&raw, "identityDashNotificationCardsByFilterVanityName")
     }
 
     /// Send a message to a LinkedIn member.
@@ -878,10 +814,14 @@ impl LinkedInClient {
 
         // Captured from live browser traffic via Chrome DevTools MCP.
         // Endpoint: POST /voyager/api/voyagerMessagingDashMessengerMessages?action=createMessage
-        // Key discovery: trackingId must be 16 random bytes as a raw string in JSON.
-        // Without it, LinkedIn returns 400.
+        // Key discovery: trackingId must be 16 random bytes, base64-encoded.
+        // The original decompiled code casts raw bytes to chars, but arbitrary
+        // bytes (0x00, 0x22/quote, 0x5C/backslash) can produce malformed JSON
+        // or control characters. Base64 encoding is safe and matches
+        // send_connection_request's approach (TrackingUtils.generateBase64EncodedTrackingId).
+        use base64::Engine;
         let tracking_bytes: [u8; 16] = rand::random();
-        let tracking_id: String = tracking_bytes.iter().map(|&b| b as char).collect();
+        let tracking_id = base64::engine::general_purpose::STANDARD.encode(tracking_bytes);
 
         let payload = serde_json::json!({
             "message": {
@@ -1013,6 +953,8 @@ impl LinkedInClient {
         thread_urn: &str,
         reaction_type: &str,
     ) -> Result<Value, Error> {
+        let rt = validate_reaction_type(reaction_type)?;
+
         // Normalize the thread URN: if just an activity ID, wrap it.
         let thread = if thread_urn.starts_with("urn:li:") {
             thread_urn.to_string()
@@ -1031,12 +973,19 @@ impl LinkedInClient {
         // `dash_social_ReactionCreateInput!` containing `threadUrn` and
         // `reactionType`. The `actorUnion` with `profileUrn` identifies
         // who is reacting (required for non-personal page reactions).
+        //
+        // INTENTIONAL DUPLICATION: threadUrn and reactionType appear both at
+        // the top level AND inside `entity`. This matches the decompiled
+        // Android app's `FeedFrameworkGraphQLClient.java` mutation builder,
+        // which populates both levels. The top-level fields are used by the
+        // GraphQL variable binding, while `entity` carries the typed input
+        // object. Removing either level causes the server to reject the request.
         let variables = serde_json::json!({
             "threadUrn": thread,
-            "reactionType": reaction_type,
+            "reactionType": rt,
             "entity": {
                 "threadUrn": thread,
-                "reactionType": reaction_type,
+                "reactionType": rt,
             }
         });
 
@@ -1065,6 +1014,8 @@ impl LinkedInClient {
         thread_urn: &str,
         reaction_type: &str,
     ) -> Result<Value, Error> {
+        let rt = validate_reaction_type(reaction_type)?;
+
         let thread = if thread_urn.starts_with("urn:li:") {
             thread_urn.to_string()
         } else {
@@ -1077,7 +1028,7 @@ impl LinkedInClient {
         // reactionType as top-level variables.
         let variables = serde_json::json!({
             "threadUrn": thread,
-            "reactionType": reaction_type,
+            "reactionType": rt,
         });
 
         self.graphql_post(
@@ -1204,17 +1155,10 @@ impl LinkedInClient {
     ///
     /// See `re/create_post.md` for the full analysis.
     pub async fn create_post(&self, text: &str, visibility: &str) -> Result<Value, Error> {
-        // Validate visibility parameter.
+        // Visibility is not validated here -- the server will reject invalid
+        // values. Callers (e.g. the CLI) should validate before calling if
+        // they want a friendlier error message.
         let vis = visibility.to_uppercase();
-        if vis != "ANYONE" && vis != "CONNECTIONS_ONLY" {
-            return Err(Error::Api {
-                status: 0,
-                body: format!(
-                    "invalid visibility '{}'. Must be ANYONE or CONNECTIONS_ONLY",
-                    visibility
-                ),
-            });
-        }
 
         // Build the mutation variables matching the ShareData model structure.
         // The entity is the "input" parameter for the CREATE mutation.
@@ -1243,6 +1187,10 @@ impl LinkedInClient {
             "includeWebMetadata": true
         });
 
+        // The web-style mutation format sends variables+queryId in the POST
+        // body (not just URL params). We still include queryId in URL params
+        // as the server uses both. The `x-li-graphql-pegasus-client` header
+        // is required for all GraphQL requests.
         let url = format!(
             "{}{}graphql?action=execute&queryId=voyagerContentcreationDashShares.279996efa5064c01775d5aff003d9377",
             BASE_URL, API_PREFIX
@@ -1251,10 +1199,13 @@ impl LinkedInClient {
             .http
             .post(&url)
             .header("Csrf-Token", &self.jsessionid)
+            .header("x-li-graphql-pegasus-client", "true")
             .json(&body)
             .send()
             .await?;
-        check_response(resp).await
+        let json = check_response(resp).await?;
+        check_graphql_errors(&json)?;
+        Ok(json)
     }
 
     /// Fetch events (messages) within a specific conversation.
@@ -1313,16 +1264,7 @@ impl LinkedInClient {
         // Unwrap the GraphQL envelope:
         //   data.messengerMessagesByConversation
         // which contains { elements, paging }.
-        raw.get("data")
-            .and_then(|d| d.get("messengerMessagesByConversation"))
-            .cloned()
-            .ok_or_else(|| Error::Api {
-                status: 0,
-                body: format!(
-                    "unexpected GraphQL response shape (missing data.messengerMessagesByConversation): {}",
-                    serde_json::to_string(&raw).unwrap_or_default()
-                ),
-            })
+        unwrap_graphql(&raw, "messengerMessagesByConversation")
     }
 
     /// Send a connection request (invitation) to another LinkedIn member.
@@ -1445,16 +1387,7 @@ impl LinkedInClient {
         // Unwrap the GraphQL envelope:
         //   data.relationshipsDashInvitationViewsByReceived
         // which contains { elements, paging }.
-        raw.get("data")
-            .and_then(|d| d.get("relationshipsDashInvitationViewsByReceived"))
-            .cloned()
-            .ok_or_else(|| Error::Api {
-                status: 0,
-                body: format!(
-                    "unexpected GraphQL response shape (missing data.relationshipsDashInvitationViewsByReceived): {}",
-                    serde_json::to_string(&raw).unwrap_or_default()
-                ),
-            })
+        unwrap_graphql(&raw, "relationshipsDashInvitationViewsByReceived")
     }
 
     /// Accept a pending connection invitation.
@@ -1505,6 +1438,75 @@ impl LinkedInClient {
 
         self.post(&path, &body).await
     }
+}
+
+/// Valid reaction type strings accepted by the LinkedIn API.
+///
+/// Extracted from `ReactionType.java` in the decompiled international APK
+/// (`com.linkedin.android.pegasus.dash.gen.voyager.dash.feed.social`).
+const VALID_REACTION_TYPES: &[&str] = &[
+    "LIKE",
+    "PRAISE",
+    "EMPATHY",
+    "INTEREST",
+    "APPRECIATION",
+    "ENTERTAINMENT",
+    "CELEBRATION",
+];
+
+/// Validate a reaction type string against the known enum values.
+///
+/// Returns the uppercased reaction type on success, or an `InvalidInput`
+/// error if the value is not recognized.
+fn validate_reaction_type(reaction_type: &str) -> Result<String, Error> {
+    let rt = reaction_type.to_uppercase();
+    if VALID_REACTION_TYPES.contains(&rt.as_str()) {
+        Ok(rt)
+    } else {
+        Err(Error::InvalidInput(format!(
+            "invalid reaction type '{}'. Valid types: {}",
+            reaction_type,
+            VALID_REACTION_TYPES.join(", ")
+        )))
+    }
+}
+
+/// Unwrap the standard GraphQL response envelope: `data.{data_key}`.
+///
+/// LinkedIn's Voyager GraphQL responses consistently wrap the payload under
+/// `{ "data": { "<finderName>": <payload> } }`. This helper extracts the
+/// payload and returns a clear error when the expected shape is missing.
+fn unwrap_graphql(raw: &Value, data_key: &str) -> Result<Value, Error> {
+    raw.get("data")
+        .and_then(|d| d.get(data_key))
+        .cloned()
+        .ok_or_else(|| Error::Api {
+            status: 0,
+            body: format!(
+                "unexpected GraphQL response shape (missing data.{}): {}",
+                data_key,
+                serde_json::to_string(raw).unwrap_or_default()
+            ),
+        })
+}
+
+/// Check a GraphQL JSON response for a top-level `errors` array and return
+/// an error if any are present. GraphQL can return HTTP 200 with logical
+/// errors in the response body.
+fn check_graphql_errors(json: &Value) -> Result<(), Error> {
+    if let Some(errors) = json.get("errors").and_then(|e| e.as_array()) {
+        if !errors.is_empty() {
+            let messages: Vec<&str> = errors
+                .iter()
+                .filter_map(|e| e.get("message").and_then(|m| m.as_str()))
+                .collect();
+            return Err(Error::Api {
+                status: 200,
+                body: format!("GraphQL errors: {}", messages.join("; ")),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Build a GraphQL query parameter string for the Voyager GraphQL endpoint.
